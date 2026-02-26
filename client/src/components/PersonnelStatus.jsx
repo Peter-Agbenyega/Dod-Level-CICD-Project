@@ -61,7 +61,7 @@ function PersonnelStatus({ personnel }) {
   return (
     <div className="panel personnel-status">
       <div className="panel-header">
-        <span>// PERSONNEL STATUS</span>
+        <span>{'// PERSONNEL STATUS'}</span>
         <span className="header-count">{personnel.total} TOTAL</span>
       </div>
       <div className="panel-body">

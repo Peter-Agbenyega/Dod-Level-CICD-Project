@@ -35,7 +35,7 @@ function ThreatAlerts({ alerts }) {
   return (
     <div className="panel threat-alerts">
       <div className="panel-header">
-        <span>// THREAT ALERTS</span>
+        <span>{'// THREAT ALERTS'}</span>
         <span className="header-count">{alerts.filter(a => !a.acknowledged).length} ACTIVE</span>
       </div>
       <div className="panel-body alerts-list">
@@ -48,7 +48,7 @@ function ThreatAlerts({ alerts }) {
                   {alert.severity.toUpperCase()}
                 </span>
                 <span className="alert-time" title={alert.timestamp}>
-                  {formatTime(alert.timestamp)} // {getTimeSince(alert.timestamp)}
+                  {formatTime(alert.timestamp)}{' // '}{getTimeSince(alert.timestamp)}
                 </span>
               </div>
               <h4 className="alert-title">{alert.title}</h4>

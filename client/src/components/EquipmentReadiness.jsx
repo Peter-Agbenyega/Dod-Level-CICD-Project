@@ -78,7 +78,7 @@ function EquipmentReadiness({ equipment }) {
   return (
     <div className="panel equipment-readiness">
       <div className="panel-header">
-        <span>// EQUIPMENT READINESS</span>
+        <span>{'// EQUIPMENT READINESS'}</span>
         <span className="header-count">{equipment.overallReadiness}% OVERALL</span>
       </div>
       <div className="panel-body">

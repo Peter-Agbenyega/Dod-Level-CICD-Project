@@ -24,7 +24,7 @@ function MissionTracker({ missions }) {
   return (
     <div className="panel mission-tracker">
       <div className="panel-header">
-        <span>// MISSION TRACKER</span>
+        <span>{'// MISSION TRACKER'}</span>
         <span className="header-count">{missions.length} OPERATIONS</span>
       </div>
       <div className="panel-body">
