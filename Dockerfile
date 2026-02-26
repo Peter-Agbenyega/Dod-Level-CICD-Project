@@ -15,6 +15,9 @@ COPY client/package.json client/package-lock.json* ./
 RUN npm ci --production=false
 
 COPY client/ ./
+# Prevent CRA from inlining the runtime chunk as an inline <script>.
+# Without this, the server's CSP (scriptSrc: 'self') blocks it → white screen.
+ENV INLINE_RUNTIME_CHUNK=false
 RUN npm run build
 
 # --- Stage 2: Production server ---
