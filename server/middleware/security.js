@@ -13,7 +13,7 @@ const helmetConfig = helmet({
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"],
-      upgradeInsecureRequests: []
+      upgradeInsecureRequests: null
     }
   },
   crossOriginEmbedderPolicy: false
