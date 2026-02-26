@@ -437,7 +437,11 @@ jobs:
           retention-days: 30
 
   # ==========================================================================
-  # Stage 13: Deploy to AWS EC2
+  # Stage 13: Deploy to AWS EC2 (Node.js + PM2, no Docker required on server)
+  # Pre-requisites on EC2 (one-time setup):
+  #   - Node.js 20: https://nodejs.org/en/download/package-manager
+  #   - PM2: npm install -g pm2
+  #   - EC2 security group: port 5000 open for health check verification
   # ==========================================================================
   deploy:
     name: "13. Deploy to EC2"
@@ -445,6 +449,24 @@ jobs:
     needs: [container-scan, iac-scan, sbom, dast, compliance]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build React client
+        working-directory: ./client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package deployment artifacts
+        run: |
+          tar -czf deploy.tar.gz server/ client/build/
+
       - name: Configure SSH key
         run: |
           mkdir -p ~/.ssh
@@ -452,33 +474,49 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Deploy to EC2
+      - name: Copy artifacts to EC2
+        run: |
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy.tar.gz \
+            ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:/tmp/deploy.tar.gz
+
+      - name: Deploy on EC2
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} << 'DEPLOY_SCRIPT'
+              set -e
               echo "=== DoD Ops Dashboard Deployment ==="
-              sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
-              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/dod-ops-dashboard:latest
-              sudo docker stop dod-ops-dashboard 2>/dev/null || true
-              sudo docker rm dod-ops-dashboard 2>/dev/null || true
-              sudo docker run -d \
-                --name dod-ops-dashboard \
-                --restart unless-stopped \
-                -p 80:5000 \
-                --read-only \
-                --tmpfs /tmp \
-                --security-opt no-new-privileges:true \
-                ${{ secrets.DOCKERHUB_USERNAME }}/dod-ops-dashboard:latest
-              sleep 10
-              sudo docker ps
-              sudo docker image prune -f
+
+              APP_DIR="/opt/dod-ops-dashboard"
+              sudo mkdir -p "$APP_DIR"
+              sudo chown "$(whoami):$(whoami)" "$APP_DIR"
+
+              # Extract artifacts (server/ and client/build/ land directly under APP_DIR)
+              tar -xzf /tmp/deploy.tar.gz -C "$APP_DIR"
+              rm -f /tmp/deploy.tar.gz
+
+              # Install production server dependencies
+              cd "$APP_DIR/server"
+              npm ci --omit=dev
+
+              # Start or restart with PM2
+              if pm2 describe dod-ops-dashboard > /dev/null 2>&1; then
+                pm2 restart dod-ops-dashboard --update-env
+              else
+                NODE_ENV=production PORT=5000 pm2 start server.js \
+                  --name dod-ops-dashboard \
+                  --restart-delay=3000
+                pm2 save
+              fi
+
               echo "=== Deployment Complete ==="
           DEPLOY_SCRIPT
 
       - name: Verify deployment
         run: |
-          sleep 30
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.EC2_HOST }}/api/health 2>/dev/null) || true
+          sleep 15
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://${{ secrets.EC2_HOST }}:5000/api/health 2>/dev/null) || true
           HTTP_STATUS=${HTTP_STATUS:-000}
           if [ "$HTTP_STATUS" = "200" ]; then
             echo "Deployment verified! HTTP $HTTP_STATUS"

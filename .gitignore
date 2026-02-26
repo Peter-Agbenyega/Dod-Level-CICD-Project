@@ -40,3 +40,4 @@ docker-bench-results.*
 # Misc
 *.log
 *.tmp
+.claude
