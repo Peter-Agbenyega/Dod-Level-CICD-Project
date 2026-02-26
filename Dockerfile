@@ -7,7 +7,7 @@
 # --- Stage 1: Build React client ---
 FROM node:20-alpine AS client-build
 
-RUN apk update && apk upgrade --no-cache
+RUN apk update && apk upgrade --no-cache && npm install -g npm@latest
 
 WORKDIR /app/client
 
@@ -20,7 +20,7 @@ RUN npm run build
 # --- Stage 2: Production server ---
 FROM node:20-alpine AS production
 
-RUN apk update && apk upgrade --no-cache
+RUN apk update && apk upgrade --no-cache && npm install -g npm@latest
 
 # Add non-root user for security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
