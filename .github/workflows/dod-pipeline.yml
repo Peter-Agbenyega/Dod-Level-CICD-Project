@@ -157,7 +157,7 @@ jobs:
 
       # OSV-Scanner for known vulnerabilities in the OSV database
       - name: Run OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v1
+        uses: google/osv-scanner-action/osv-scanner-action@v1.9.2
         continue-on-error: true
         with:
           scan-args: |-
