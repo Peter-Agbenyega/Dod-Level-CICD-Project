@@ -12,7 +12,8 @@ const helmetConfig = helmet({
       connectSrc: ["'self'", 'https://fonts.googleapis.com', 'https://fonts.gstatic.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       objectSrc: ["'none'"],
-      frameAncestors: ["'none'"]
+      frameAncestors: ["'none'"],
+      upgradeInsecureRequests: []
     }
   },
   crossOriginEmbedderPolicy: false
