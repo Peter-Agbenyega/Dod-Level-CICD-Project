@@ -478,7 +478,7 @@ jobs:
       - name: Verify deployment
         run: |
           sleep 30
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.EC2_HOST }}/api/health 2>/dev/null)
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.EC2_HOST }}/api/health 2>/dev/null) || true
           HTTP_STATUS=${HTTP_STATUS:-000}
           if [ "$HTTP_STATUS" = "200" ]; then
             echo "Deployment verified! HTTP $HTTP_STATUS"
