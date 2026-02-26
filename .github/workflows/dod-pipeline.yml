@@ -1,0 +1,491 @@
+# =============================================================================
+# DoD DevSecOps CI/CD Pipeline
+# Mirrors DoD Enterprise DevSecOps Reference Design
+# =============================================================================
+# Pipeline Stages:
+#   1. Lint (ESLint + Security Plugin)
+#   2. Unit Tests (Jest + Coverage)
+#   3. SAST (SonarCloud)
+#   4. SCA (npm audit + OSV-Scanner)
+#   5. Secrets Detection (Gitleaks)
+#   6. Build & Push (Docker Hub)
+#   7. Container Scan (Trivy)
+#   8. IaC Scan (Checkov)
+#   9. SBOM Generation (Syft)
+#  10. DAST (OWASP ZAP)
+#  11. Compliance (Docker Bench for Security)
+#  12. Publish Artifacts
+#  13. Deploy (EC2)
+# =============================================================================
+
+name: DoD DevSecOps Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  DOCKER_IMAGE: dod-ops-dashboard
+  NODE_VERSION: '20'
+
+jobs:
+  # ==========================================================================
+  # Stage 1: Lint - ESLint with Security Plugin
+  # ==========================================================================
+  lint:
+    name: "1. Lint (ESLint + Security)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install server dependencies
+        working-directory: ./server
+        run: npm ci
+
+      - name: Run ESLint with security rules
+        working-directory: ./server
+        run: npx eslint . --ext .js --format json --output-file ../eslint-results.json || true
+
+      - name: Display lint results
+        if: always()
+        working-directory: ./server
+        run: npx eslint . --ext .js || true
+
+      - name: Upload ESLint results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eslint-results
+          path: eslint-results.json
+          retention-days: 30
+
+  # ==========================================================================
+  # Stage 2: Unit Tests - Jest with Coverage
+  # ==========================================================================
+  test:
+    name: "2. Unit Tests (Jest)"
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        working-directory: ./server
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npx jest --coverage --forceExit --coverageReporters=text --coverageReporters=lcov --coverageReporters=json-summary
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 30
+
+  # ==========================================================================
+  # Stage 3: SAST - SonarCloud Static Analysis
+  # ==========================================================================
+  sast:
+    name: "3. SAST (SonarCloud)"
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@v3
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: SAST scan completed
+        run: echo "SAST analysis submitted to SonarCloud. Review results at sonarcloud.io"
+
+  # ==========================================================================
+  # Stage 4: SCA - Software Composition Analysis
+  # ==========================================================================
+  sca:
+    name: "4. SCA (npm audit + OSV-Scanner)"
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # npm audit for server
+      - name: npm audit (server)
+        working-directory: ./server
+        run: |
+          npm ci
+          npm audit --json > ../npm-audit-server.json 2>&1 || true
+          echo "=== Server Dependency Audit ==="
+          npm audit || true
+
+      # npm audit for client
+      - name: npm audit (client)
+        working-directory: ./client
+        run: |
+          npm ci
+          npm audit --json > ../npm-audit-client.json 2>&1 || true
+          echo "=== Client Dependency Audit ==="
+          npm audit || true
+
+      # OSV-Scanner for known vulnerabilities in the OSV database
+      - name: Run OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v1
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --recursive
+            ./
+
+      - name: Upload SCA results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sca-results
+          path: |
+            npm-audit-server.json
+            npm-audit-client.json
+          retention-days: 30
+
+  # ==========================================================================
+  # Stage 5: Secrets Detection - Gitleaks
+  # ==========================================================================
+  secrets:
+    name: "5. Secrets Detection (Gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  # ==========================================================================
+  # Stage 6: Build & Push Docker Image to Docker Hub
+  # ==========================================================================
+  build:
+    name: "6. Build & Push (Docker Hub)"
+    runs-on: ubuntu-latest
+    needs: [test, sca, secrets]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+
+  # ==========================================================================
+  # Stage 7: Container Vulnerability Scan - Trivy
+  # ==========================================================================
+  container-scan:
+    name: "7. Container Scan (Trivy)"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: docker build -t ${{ env.DOCKER_IMAGE }}:scan .
+
+      # Trivy image vulnerability scan (fails on HIGH/CRITICAL)
+      - name: Trivy image vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: '${{ env.DOCKER_IMAGE }}:scan'
+          format: 'table'
+          output: 'trivy-image-results.txt'
+          exit-code: '1'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      # Always generate SARIF for artifact upload
+      - name: Trivy SARIF report
+        uses: aquasecurity/trivy-action@0.28.0
+        if: always()
+        with:
+          image-ref: '${{ env.DOCKER_IMAGE }}:scan'
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+          exit-code: '0'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      - name: Display Trivy results
+        if: always()
+        run: cat trivy-image-results.txt 2>/dev/null || echo "No results file"
+
+      - name: Upload Trivy results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-container-results
+          path: |
+            trivy-image-results.txt
+            trivy-image-results.sarif
+          retention-days: 30
+
+  # ==========================================================================
+  # Stage 8: IaC Scan - Checkov
+  # ==========================================================================
+  iac-scan:
+    name: "8. IaC Scan (Checkov)"
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov on Dockerfile
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          file: Dockerfile
+          output_format: cli
+          soft_fail: true
+
+      - name: Run Checkov on docker-compose
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          file: docker-compose.yml
+          output_format: cli
+          soft_fail: true
+
+  # ==========================================================================
+  # Stage 9: SBOM Generation - Syft (CycloneDX format)
+  # ==========================================================================
+  sbom:
+    name: "9. SBOM Generation (Syft)"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build image for SBOM
+        run: docker build -t ${{ env.DOCKER_IMAGE }}:sbom .
+
+      - name: Generate SBOM with Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: '${{ env.DOCKER_IMAGE }}:sbom'
+          format: cyclonedx-json
+          output-file: sbom-cyclonedx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom-cyclonedx.json
+          retention-days: 30
+
+  # ==========================================================================
+  # Stage 10: DAST - OWASP ZAP Baseline Scan
+  # ==========================================================================
+  dast:
+    name: "10. DAST (OWASP ZAP)"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build and start application
+        run: |
+          docker build -t ${{ env.DOCKER_IMAGE }}:dast .
+          docker run -d --name dast-target -p 5000:5000 ${{ env.DOCKER_IMAGE }}:dast
+          echo "Waiting for application to start..."
+          sleep 15
+          curl -f http://localhost:5000/api/health || (docker logs dast-target && exit 1)
+
+      - name: OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: 'http://localhost:5000'
+          rules_file_name: ''
+          cmd_options: '-a -j'
+        continue-on-error: true
+
+      - name: Stop application
+        if: always()
+        run: docker stop dast-target && docker rm dast-target
+
+      - name: Upload ZAP results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-results
+          path: report_html.html
+          retention-days: 30
+
+  # ==========================================================================
+  # Stage 11: Compliance - Docker Bench for Security (CIS Benchmark)
+  # ==========================================================================
+  compliance:
+    name: "11. Compliance (Docker Bench)"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build image for compliance check
+        run: docker build -t ${{ env.DOCKER_IMAGE }}:compliance .
+
+      - name: Start container for benchmarking
+        run: docker run -d --name compliance-target ${{ env.DOCKER_IMAGE }}:compliance
+
+      - name: Run Docker Bench for Security
+        run: |
+          docker run --rm --net host --pid host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /etc:/etc:ro \
+            docker/docker-bench-security \
+            -c container_images,container_runtime \
+            -t compliance-target > docker-bench-results.txt 2>&1 || true
+          echo "=== Docker Bench Results ==="
+          cat docker-bench-results.txt
+
+      - name: Stop container
+        if: always()
+        run: docker stop compliance-target && docker rm compliance-target
+
+      - name: Upload compliance results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compliance-results
+          path: docker-bench-results.txt
+          retention-days: 30
+
+  # ==========================================================================
+  # Stage 12: Publish All Scan Artifacts (summary)
+  # ==========================================================================
+  publish-artifacts:
+    name: "12. Publish Scan Summary"
+    runs-on: ubuntu-latest
+    needs: [container-scan, iac-scan, sbom, dast, compliance]
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-scan-results/
+
+      - name: List all scan results
+        run: |
+          echo "============================================"
+          echo "  DoD DevSecOps Pipeline - Scan Summary"
+          echo "============================================"
+          echo ""
+          find all-scan-results/ -type f | sort
+          echo ""
+          echo "All scan results available as workflow artifacts."
+
+      - name: Upload combined results
+        uses: actions/upload-artifact@v4
+        with:
+          name: dod-pipeline-all-results
+          path: all-scan-results/
+          retention-days: 30
+
+  # ==========================================================================
+  # Stage 13: Deploy to AWS EC2
+  # ==========================================================================
+  deploy:
+    name: "13. Deploy to EC2"
+    runs-on: ubuntu-latest
+    needs: [container-scan, iac-scan, sbom, dast, compliance]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Configure SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Deploy to EC2
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} << 'DEPLOY_SCRIPT'
+              echo "=== DoD Ops Dashboard Deployment ==="
+              sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/dod-ops-dashboard:latest
+              sudo docker stop dod-ops-dashboard 2>/dev/null || true
+              sudo docker rm dod-ops-dashboard 2>/dev/null || true
+              sudo docker run -d \
+                --name dod-ops-dashboard \
+                --restart unless-stopped \
+                -p 80:5000 \
+                --read-only \
+                --tmpfs /tmp \
+                --security-opt no-new-privileges:true \
+                ${{ secrets.DOCKERHUB_USERNAME }}/dod-ops-dashboard:latest
+              sleep 10
+              sudo docker ps
+              sudo docker image prune -f
+              echo "=== Deployment Complete ==="
+          DEPLOY_SCRIPT
+
+      - name: Verify deployment
+        run: |
+          sleep 15
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.EC2_HOST }}/api/health || echo "000")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "Deployment verified! HTTP $HTTP_STATUS"
+          else
+            echo "Health check returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
