@@ -418,6 +418,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: all-scan-results/
+          pattern: "{eslint-results,coverage-report,sca-results,trivy-container-results,sbom-cyclonedx,zap-results,compliance-results,gitleaks-results.sarif,dod-ops-dashboard_sbom.cyclonedx.json}"
+          merge-multiple: false
 
       - name: List all scan results
         run: |

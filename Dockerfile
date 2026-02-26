@@ -35,7 +35,7 @@ RUN npm ci --production && npm cache clean --force
 COPY server/ ./
 
 # Copy React build from Stage 1
-COPY --from=client-build /app/client/build ./client/build
+COPY --from=client-build /app/client/build /client/build
 
 # Set environment
 ENV NODE_ENV=production
