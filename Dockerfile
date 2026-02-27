@@ -32,7 +32,7 @@ WORKDIR /app
 
 # Install server dependencies
 COPY server/package.json server/package-lock.json* ./
-RUN npm ci --production && npm cache clean --force
+RUN npm ci --production && npm cache clean --force && rm -f package-lock.json
 
 # Copy server source
 COPY server/ ./
