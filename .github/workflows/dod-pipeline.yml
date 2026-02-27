@@ -15,8 +15,7 @@
 #  10. DAST (OWASP ZAP)
 #  11. Compliance (Docker Bench for Security)
 #  12. Publish Artifacts
-#  13. Deploy (EC2)
-#  14. GitOps Image Tag Update (ArgoCD → EKS)
+#  13. Deploy to EKS (GitOps → ArgoCD)
 # =============================================================================
 
 name: DoD DevSecOps Pipeline
@@ -27,9 +26,11 @@ on:
   pull_request:
     branches: [main]
 
-# Required for stage 14 to commit the updated image tag back to the repo
+# contents:write  — stage 13 commits the updated image tag back to the repo
+# id-token:write  — stage 13 exchanges a GitHub OIDC token for AWS credentials
 permissions:
   contents: write
+  id-token: write
 
 env:
   DOCKER_IMAGE: dod-ops-dashboard
@@ -458,97 +459,20 @@ jobs:
           retention-days: 30
 
   # ==========================================================================
-  # Stage 13: Deploy to AWS EC2 using the scanned Docker Hub image
-  # Docker is installed automatically on first run (Amazon Linux 2023).
-  # EC2 security group must allow port 80 (inbound).
+  # Stage 13: Deploy to EKS (GitOps via ArgoCD)
+  # All security gates (container scan, IaC, SBOM, DAST, compliance) must
+  # pass before deployment proceeds.
+  # Flow:
+  #   1. Update image tag in helm/values.yaml and push ([skip ci] commit)
+  #   2. Annotate the ArgoCD Application to trigger an immediate refresh
+  #   3. Wait for Kubernetes rollout to complete
+  #   4. Health-check the app via the ingress-nginx load balancer
+  # Requires GitHub secret: AWS_ROLE_ARN (output of terraform apply)
   # ==========================================================================
   deploy:
-    name: "13. Deploy to EC2"
+    name: "13. Deploy to EKS (GitOps → ArgoCD)"
     runs-on: ubuntu-latest
     needs: [container-scan, iac-scan, sbom, dast, compliance]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Configure SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-
-      - name: Deploy to EC2
-        run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} \
-            DOCKERHUB_USERNAME='${{ secrets.DOCKERHUB_USERNAME }}' \
-            DOCKERHUB_TOKEN='${{ secrets.DOCKERHUB_TOKEN }}' \
-            bash << 'DEPLOY_SCRIPT'
-              set -e
-              echo "=== DoD Ops Dashboard Deployment ==="
-
-              # --- Bootstrap Docker if not present (Amazon Linux 2023) ---
-              if ! command -v docker > /dev/null 2>&1; then
-                echo "Installing Docker..."
-                sudo dnf install -y docker
-                sudo systemctl enable --now docker
-              fi
-
-              # Ensure the deploy user can run docker
-              if ! groups | grep -q docker; then
-                sudo usermod -aG docker "$(whoami)"
-              fi
-
-              docker --version
-
-              # --- Pull and run the scanned image from Docker Hub ---
-              echo "$DOCKERHUB_TOKEN" | sudo docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-              sudo docker pull "$DOCKERHUB_USERNAME"/dod-ops-dashboard:latest
-              sudo docker stop dod-ops-dashboard 2>/dev/null || true
-              sudo docker rm   dod-ops-dashboard 2>/dev/null || true
-              sudo docker run -d \
-                --name dod-ops-dashboard \
-                --restart unless-stopped \
-                -p 80:5000 \
-                --read-only \
-                --tmpfs /tmp \
-                --security-opt no-new-privileges:true \
-                "$DOCKERHUB_USERNAME"/dod-ops-dashboard:latest
-              sleep 10
-              sudo docker ps
-              sudo docker image prune -f
-              echo "=== Deployment Complete ==="
-          DEPLOY_SCRIPT
-
-      - name: Verify deployment
-        run: |
-          sleep 30
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            http://${{ secrets.EC2_HOST }}/api/health 2>/dev/null) || true
-          HTTP_STATUS=${HTTP_STATUS:-000}
-          if [ "$HTTP_STATUS" = "200" ]; then
-            echo "Deployment verified! HTTP $HTTP_STATUS"
-          else
-            echo "Health check returned HTTP $HTTP_STATUS"
-            exit 1
-          fi
-
-      - name: Cleanup SSH key
-        if: always()
-        run: rm -f ~/.ssh/deploy_key
-
-  # ==========================================================================
-  # Stage 14: GitOps Image Tag Update → ArgoCD → EKS
-  # Commits the verified image SHA to helm/values.yaml.
-  # ArgoCD detects the change and runs helm upgrade on the EKS cluster.
-  # [skip ci] in the commit message prevents a pipeline loop.
-  # Pre-requisites (one-time):
-  #   1. terraform apply (provisions EKS cluster + IAM OIDC role)
-  #   2. Install ArgoCD on the cluster
-  #   3. kubectl apply -f argocd/application.yaml
-  # ==========================================================================
-  gitops-update:
-    name: "14. GitOps Image Tag Update (ArgoCD → EKS)"
-    runs-on: ubuntu-latest
-    needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
@@ -556,6 +480,15 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name dod-ops-cluster --region us-east-2
 
       - name: Update image tag in Helm values
         run: |
@@ -572,3 +505,33 @@ jobs:
           git diff --staged --quiet && echo "No changes to commit" && exit 0
           git commit -m "chore: update image tag to ${{ github.sha }} [skip ci]"
           git push
+
+      - name: Trigger ArgoCD refresh
+        run: |
+          kubectl annotate application dod-ops-dashboard -n argocd \
+            argocd.argoproj.io/refresh=normal --overwrite
+
+      - name: Wait for rollout
+        run: |
+          echo "Waiting for ArgoCD to sync and roll out new image..."
+          sleep 20
+          kubectl rollout status deployment/dod-ops-dashboard-dod-ops-dashboard \
+            -n dod-production --timeout=5m
+
+      - name: Verify EKS deployment health
+        run: |
+          ELB=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          echo "Load balancer: $ELB"
+          for i in $(seq 1 12); do
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://${ELB}/api/health 2>/dev/null || echo "000")
+            if [ "$HTTP" = "200" ]; then
+              echo "Deployment verified! HTTP $HTTP"
+              exit 0
+            fi
+            echo "Attempt $i/12: HTTP $HTTP — retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check failed after 2 minutes"
+          exit 1

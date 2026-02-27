@@ -28,7 +28,7 @@ ingress:
   className: nginx
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
-  host: dod-ops.example.com  # replace with your actual domain or ELB DNS name
+  host: ""  # catch-all: nginx routes all traffic to the app regardless of Host header
   tls: []
 
 resources:
