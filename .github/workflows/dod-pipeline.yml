@@ -10,12 +10,13 @@
 #   5. Secrets Detection (Gitleaks)
 #   6. Build & Push (Docker Hub)
 #   7. Container Scan (Trivy)
-#   8. IaC Scan (Checkov)
+#   8. IaC Scan (Checkov) — Dockerfile, docker-compose, Terraform, Helm
 #   9. SBOM Generation (Syft)
 #  10. DAST (OWASP ZAP)
 #  11. Compliance (Docker Bench for Security)
 #  12. Publish Artifacts
 #  13. Deploy (EC2)
+#  14. GitOps Image Tag Update (ArgoCD → EKS)
 # =============================================================================
 
 name: DoD DevSecOps Pipeline
@@ -25,6 +26,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+
+# Required for stage 14 to commit the updated image tag back to the repo
+permissions:
+  contents: write
 
 env:
   DOCKER_IMAGE: dod-ops-dashboard
@@ -298,6 +303,20 @@ jobs:
           output_format: cli
           soft_fail: true
 
+      - name: Run Checkov on Terraform
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform/
+          output_format: cli
+          soft_fail: true
+
+      - name: Run Checkov on Helm chart
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: helm/
+          output_format: cli
+          soft_fail: true
+
   # ==========================================================================
   # Stage 9: SBOM Generation - Syft (CycloneDX format)
   # ==========================================================================
@@ -515,3 +534,41 @@ jobs:
       - name: Cleanup SSH key
         if: always()
         run: rm -f ~/.ssh/deploy_key
+
+  # ==========================================================================
+  # Stage 14: GitOps Image Tag Update → ArgoCD → EKS
+  # Commits the verified image SHA to helm/values.yaml.
+  # ArgoCD detects the change and runs helm upgrade on the EKS cluster.
+  # [skip ci] in the commit message prevents a pipeline loop.
+  # Pre-requisites (one-time):
+  #   1. terraform apply (provisions EKS cluster + IAM OIDC role)
+  #   2. Install ArgoCD on the cluster
+  #   3. kubectl apply -f argocd/application.yaml
+  # ==========================================================================
+  gitops-update:
+    name: "14. GitOps Image Tag Update (ArgoCD → EKS)"
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+
+      - name: Update image tag in Helm values
+        run: |
+          sed -i "s|^  tag:.*|  tag: \"${{ github.sha }}\"|" \
+            helm/dod-ops-dashboard/values.yaml
+          echo "Updated image tag to ${{ github.sha }}"
+          grep "tag:" helm/dod-ops-dashboard/values.yaml
+
+      - name: Commit and push updated image tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/dod-ops-dashboard/values.yaml
+          git diff --staged --quiet && echo "No changes to commit" && exit 0
+          git commit -m "chore: update image tag to ${{ github.sha }} [skip ci]"
+          git push
