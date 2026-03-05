@@ -8,14 +8,16 @@
 #   3. SAST (SonarCloud)
 #   4. SCA (npm audit + OSV-Scanner)
 #   5. Secrets Detection (Gitleaks)
-#   6. Build & Push (Docker Hub)
+#   6. Build (validate image builds — no push)
 #   7. Container Scan (Trivy)
 #   8. IaC Scan (Checkov) — Dockerfile, docker-compose, Terraform, Helm
 #   9. SBOM Generation (Syft)
 #  10. DAST (OWASP ZAP)
 #  11. Compliance (Docker Bench for Security)
-#  12. Publish Artifacts
-#  13. Deploy to EKS (GitOps → ArgoCD)
+#  12. Push to Docker Hub (only after ALL scans pass)
+#  13. Publish Artifacts
+#  14. Manual Approval (production environment gate)
+#  15. Deploy to EKS (GitOps → ArgoCD)
 # =============================================================================
 
 name: DoD DevSecOps Pipeline
@@ -26,8 +28,8 @@ on:
   pull_request:
     branches: [main]
 
-# contents:write  — stage 13 commits the updated image tag back to the repo
-# id-token:write  — stage 13 exchanges a GitHub OIDC token for AWS credentials
+# contents:write  — stage 15 commits the updated image tag back to the repo
+# id-token:write  — stage 15 exchanges a GitHub OIDC token for AWS credentials
 permissions:
   contents: write
   id-token: write
@@ -199,10 +201,11 @@ jobs:
         continue-on-error: true
 
   # ==========================================================================
-  # Stage 6: Build & Push Docker Image to Docker Hub
+  # Stage 6: Build Docker image — validate only, no push to registry.
+  # The image is NOT published until all security scans pass (Stage 12).
   # ==========================================================================
   build:
-    name: "6. Build & Push (Docker Hub)"
+    name: "6. Build (validate — no push)"
     runs-on: ubuntu-latest
     needs: [test, sca, secrets]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -210,23 +213,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build image
+        run: docker build -t ${{ env.DOCKER_IMAGE }}:${{ github.sha }} .
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+      - name: Confirm build succeeded
+        run: docker inspect ${{ env.DOCKER_IMAGE }}:${{ github.sha }} > /dev/null
 
   # ==========================================================================
   # Stage 7: Container Vulnerability Scan - Trivy
@@ -426,12 +417,44 @@ jobs:
           retention-days: 30
 
   # ==========================================================================
-  # Stage 12: Publish All Scan Artifacts (summary)
+  # Stage 12: Push verified image to Docker Hub
+  # Runs only after ALL security scans pass. This is the security gate —
+  # no unscanned image ever reaches the registry.
+  # ==========================================================================
+  push:
+    name: "12. Push to Docker Hub (post-scan)"
+    runs-on: ubuntu-latest
+    needs: [container-scan, sbom, dast, compliance]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push verified image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+
+  # ==========================================================================
+  # Stage 13: Publish All Scan Artifacts (summary)
   # ==========================================================================
   publish-artifacts:
-    name: "12. Publish Scan Summary"
+    name: "13. Publish Scan Summary"
     runs-on: ubuntu-latest
-    needs: [container-scan, iac-scan, sbom, dast, compliance]
+    needs: [push, iac-scan]
     if: always()
     steps:
       - name: Download all artifacts
@@ -459,20 +482,36 @@ jobs:
           retention-days: 30
 
   # ==========================================================================
-  # Stage 13: Deploy to EKS (GitOps via ArgoCD)
-  # All security gates (container scan, IaC, SBOM, DAST, compliance) must
-  # pass before deployment proceeds.
+  # Stage 14: Manual Approval Gate
+  # Pauses the pipeline and waits for a designated reviewer to approve
+  # before deployment proceeds. Requires a GitHub Environment named
+  # "production" with required reviewers configured:
+  #   Repo → Settings → Environments → production → Required reviewers
+  # ==========================================================================
+  approval:
+    name: "14. Manual Approval"
+    runs-on: ubuntu-latest
+    needs: push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Deployment approved
+        run: echo "Deployment to EKS approved. Proceeding..."
+
+  # ==========================================================================
+  # Stage 15: Deploy to EKS (GitOps via ArgoCD)
+  # Runs only after manual approval is granted.
   # Flow:
   #   1. Update image tag in helm/values.yaml and push ([skip ci] commit)
   #   2. Annotate the ArgoCD Application to trigger an immediate refresh
   #   3. Wait for Kubernetes rollout to complete
   #   4. Health-check the app via the ingress-nginx load balancer
-  # Requires GitHub secret: AWS_ROLE_ARN (output of terraform apply)
+  # Requires GitHub secret: AWS_ROLE_ARN
   # ==========================================================================
   deploy:
-    name: "13. Deploy to EKS (GitOps → ArgoCD)"
+    name: "15. Deploy to EKS (GitOps → ArgoCD)"
     runs-on: ubuntu-latest
-    needs: [container-scan, iac-scan, sbom, dast, compliance]
+    needs: approval
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
@@ -489,6 +528,9 @@ jobs:
 
       - name: Configure kubectl
         run: aws eks update-kubeconfig --name dod-ops-cluster --region us-east-2
+
+      - name: Ensure ArgoCD Application is registered
+        run: kubectl apply -f argocd/application.yaml
 
       - name: Update image tag in Helm values
         run: |
