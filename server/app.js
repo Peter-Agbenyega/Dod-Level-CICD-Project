@@ -11,16 +11,10 @@ const app = express();
 // Security middleware
 app.use(helmetConfig);
 app.use(corsConfig);
-app.use(limiter);
 app.use(express.json());
 
-// API routes
-app.use('/api/missions', missionsRouter);
-app.use('/api/personnel', personnelRouter);
-app.use('/api/equipment', equipmentRouter);
-app.use('/api/alerts', alertsRouter);
-
-// Health check
+// Health check — registered before the rate limiter so Kubernetes
+// liveness/readiness probes are never throttled
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'operational',
@@ -29,6 +23,15 @@ app.get('/api/health', (req, res) => {
     version: process.env.npm_package_version || '1.0.0'
   });
 });
+
+// Rate limiter applied only to API routes (not the health endpoint)
+app.use(limiter);
+
+// API routes
+app.use('/api/missions', missionsRouter);
+app.use('/api/personnel', personnelRouter);
+app.use('/api/equipment', equipmentRouter);
+app.use('/api/alerts', alertsRouter);
 
 // Serve React build in production
 if (process.env.NODE_ENV === 'production') {
