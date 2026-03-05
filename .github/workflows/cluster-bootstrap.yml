@@ -118,33 +118,6 @@ jobs:
           kubectl get nodes
 
       # -------------------------------------------------------------------------
-      # Grant the deploying IAM user cluster-admin access.
-      # create-access-entry is idempotent — safe to re-run (exits 0 if exists).
-      # -------------------------------------------------------------------------
-      - name: Grant Mainuser cluster-admin access
-        run: |
-          PRINCIPAL="arn:aws:iam::${{ vars.AWS_ACCOUNT_ID || '450665609241' }}:user/Mainuser"
-          CLUSTER="${{ github.event.inputs.cluster_name }}"
-          REGION="${{ github.event.inputs.aws_region }}"
-
-          # Create access entry (no-op if already exists)
-          aws eks create-access-entry \
-            --cluster-name "$CLUSTER" \
-            --region "$REGION" \
-            --principal-arn "$PRINCIPAL" \
-            --type STANDARD 2>&1 | grep -v "already exists" || true
-
-          # Associate cluster-admin policy
-          aws eks associate-access-policy \
-            --cluster-name "$CLUSTER" \
-            --region "$REGION" \
-            --principal-arn "$PRINCIPAL" \
-            --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
-            --access-scope type=cluster 2>&1 | grep -v "already exists" || true
-
-          echo "Mainuser cluster-admin access confirmed."
-
-      # -------------------------------------------------------------------------
       # Install ingress-nginx using the pinned chart version
       # -------------------------------------------------------------------------
       - name: Install ingress-nginx
