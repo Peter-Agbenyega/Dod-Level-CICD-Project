@@ -135,10 +135,11 @@ jobs:
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --version ${{ env.INGRESS_NGINX_VERSION }} \
             --namespace ingress-nginx \
-            --create-namespace \
-            --set controller.image.tag=v1.14.3 \
-            --wait \
-            --timeout=10m
+            --create-namespace
+
+          echo "Waiting for ingress-nginx controller to be ready..."
+          kubectl rollout status deployment/ingress-nginx-controller \
+            -n ingress-nginx --timeout=10m
 
           echo "ingress-nginx installed."
           kubectl get pods -n ingress-nginx
