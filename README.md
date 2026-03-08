@@ -592,3 +592,162 @@ helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
   to call kubectl. I resolved this by adding the role as an EKS access entry and associating it with AmazonEKSClusterAdminPolicy. I also learned
    that this is a one-time manual step per cluster and should not be automated in the pipeline itself, since the pipeline role would need       
   eks:CreateAccessEntry permissions to do it — which would be over-privileged for a deployment role.
+
+==============================================================================================================
+# CONNECT TO THE KUBERNETES CLUSTER # CONNECT TO THE KUBERNETES CLUSTER # CONNECT TO THE KUBERNETES CLUSTER
+==============================================================================================================
+==============================================================================================================
+# CONNECT TO THE KUBERNETES CLUSTER # CONNECT TO THE KUBERNETES CLUSTER # CONNECT TO THE KUBERNETES CLUSTER
+==============================================================================================================
+==============================================================================================================
+# CONNECT TO THE KUBERNETES CLUSTER # CONNECT TO THE KUBERNETES CLUSTER # CONNECT TO THE KUBERNETES CLUSTER
+==============================================================================================================
+ Cluster Access
+
+  # Connect to your EKS cluster
+  aws eks update-kubeconfig --region us-east-2 --name dod-ops-cluster
+
+  ---
+  Pods
+
+  # List all pods in your app namespace
+  kubectl get pods -n dod-production
+
+  # Watch pods in real time
+  kubectl get pods -n dod-production -w
+
+  # Describe a pod (events, resource limits, probe status)
+  kubectl describe pod <pod-name> -n dod-production
+
+  # View live logs
+  kubectl logs <pod-name> -n dod-production
+
+  # Follow logs (tail -f equivalent)
+  kubectl logs -f <pod-name> -n dod-production
+
+  # Logs from previous crashed container (if pod restarted)
+  kubectl logs <pod-name> -n dod-production --previous
+
+  # Shell into a running pod
+  kubectl exec -it <pod-name> -n dod-production -- /bin/sh
+
+  ---
+  Deployments
+
+  # Check deployment status
+  kubectl get deployment -n dod-production
+
+  # See full deployment details (image, replicas, strategy)
+  kubectl describe deployment dod-ops-dashboard-dod-ops-dashboard -n dod-production
+
+  # Check rollout status
+  kubectl rollout status deployment/dod-ops-dashboard-dod-ops-dashboard -n dod-production
+
+  # View rollout history
+  kubectl rollout history deployment/dod-ops-dashboard-dod-ops-dashboard -n dod-production
+
+  # Roll back to the previous version
+  kubectl rollout undo deployment/dod-ops-dashboard-dod-ops-dashboard -n dod-production
+
+  # Scale replicas manually
+  kubectl scale deployment dod-ops-dashboard-dod-ops-dashboard -n dod-production --replicas=3
+
+  ---
+  Services & Load Balancer
+
+  # Get the NLB hostname
+  kubectl get svc ingress-nginx-controller -n ingress-nginx
+
+  # Get all services in your app namespace
+  kubectl get svc -n dod-production
+
+  # Test app health directly
+  curl http://<NLB-hostname>/api/health
+
+  ---
+  Ingress
+
+  # Check ingress rules
+  kubectl get ingress -n dod-production
+
+  # Describe ingress (backend, TLS, events)
+  kubectl describe ingress -n dod-production
+
+  ---
+  HPA (Autoscaler)
+
+  # Check if HPA is scaling
+  kubectl get hpa -n dod-production
+
+  # Watch HPA metrics live
+  kubectl get hpa -n dod-production -w
+
+  ---
+  ArgoCD
+
+  # Check ArgoCD app sync status
+  kubectl get application -n argocd
+
+  # Describe the app (sync errors, health)
+  kubectl describe application dod-ops-dashboard -n argocd
+
+  # Force a manual sync
+  kubectl patch application dod-ops-dashboard -n argocd \
+    --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'
+
+  # Get ArgoCD admin password
+  kubectl get secret argocd-initial-admin-secret -n argocd \
+    -o jsonpath="{.data.password}" | base64 -d
+
+  ---
+  Events & Debugging
+
+  # See all recent events in a namespace (great for spotting failures)
+  kubectl get events -n dod-production --sort-by='.lastTimestamp'
+
+  # Events across all namespaces
+  kubectl get events -A --sort-by='.lastTimestamp'
+
+  # Check node health
+  kubectl get nodes
+
+  # Check resource usage per node
+  kubectl top nodes
+
+  # Check resource usage per pod
+  kubectl top pods -n dod-production
+
+  ---
+  Helm
+
+  # List Helm releases
+  helm list -A
+
+  # Check a specific release status
+  helm status dod-ops-dashboard -n dod-production
+
+  # See computed values for the release
+  helm get values dod-ops-dashboard -n dod-production
+
+  # Manually roll back a Helm release
+  helm rollback dod-ops-dashboard 1 -n dod-production
+
+  ---
+  Quick Troubleshooting Sequence
+
+  When something is broken, run these in order:
+
+  # 1. Are pods running?
+  kubectl get pods -n dod-production
+
+  # 2. Why is a pod failing?
+  kubectl describe pod <pod-name> -n dod-production
+
+  # 3. What is the app logging?
+  kubectl logs <pod-name> -n dod-production --previous
+
+  # 4. Did ArgoCD sync correctly?
+  kubectl get application -n argocd
+
+  # 5. Any cluster-wide events?
+  kubectl get events -A --sort-by='.lastTimestamp' | tail -20
