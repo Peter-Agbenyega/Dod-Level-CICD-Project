@@ -559,6 +559,8 @@ jobs:
           sleep 20
           kubectl rollout status deployment/dod-ops-dashboard-dod-ops-dashboard \
             -n dod-production --timeout=5m
+          echo "Rollout complete. Waiting 90s for NLB to register new pods as healthy targets..."
+          sleep 90
 
       - name: Verify EKS deployment health
         run: |

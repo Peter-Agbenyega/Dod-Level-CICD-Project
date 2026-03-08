@@ -258,9 +258,11 @@ Navigate to your GitHub repo > **Settings** > **Secrets and variables** > **Acti
 | `DOCKERHUB_USERNAME` | Docker Hub login | Your Docker Hub username |
 | `DOCKERHUB_TOKEN` | Docker Hub access token | Docker Hub > Account Settings > Security > New Access Token (Read & Write) |
 | `SONAR_TOKEN` | SonarCloud authentication | SonarCloud > My Account > Security > Generate Token |
-| `EC2_HOST` | EC2 public IP | From AWS Console after launching instance |
-| `EC2_SSH_KEY` | SSH private key contents | `cat your-key.pem` (copy full output) |
-| `EC2_USERNAME` | SSH username | `ubuntu` for Ubuntu AMI, `ec2-user` for Amazon Linux |
+
+# Setup Environment secret for Manual approval to Deploy to the Cluster
+Go to your repo → Settings → Environments → New environment → name it production → add Required reviewers (your GitHub username) → Save.      
+  Once that's done, every pipeline run will pause at Stage 14 and send you an email/notification asking for approval before anything touches the
+   cluster.
 
 ---
 
@@ -360,3 +362,233 @@ Dev dependencies (`devDependencies`) are not included in the production Docker i
 
 ### Checkov fails on docker-compose.yml
 Ensure `read_only: true`, `security_opt: [no-new-privileges:true]`, and `tmpfs` are configured. These are CIS Docker benchmark requirements.
+
+==========================================================================================
+# SET UP IAM ROLE FOR GITHUB TO AUTHENTICATE WITH YOUR CLUSTER
+==========================================================================================
+==========================================================================================
+# SET UP IAM ROLE FOR GITHUB TO AUTHENTICATE WITH YOUR CLUSTER
+==========================================================================================
+==========================================================================================
+# SET UP IAM ROLE FOR GITHUB TO AUTHENTICATE WITH YOUR CLUSTER
+==========================================================================================
+ You need to create two things: the GitHub OIDC provider (so AWS trusts GitHub's tokens) and the IAM role itself. Here are the exact AWS CLI   
+  commands:
+
+# Step 1 — Create the GitHub OIDC provider (one-time per AWS account)
+aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  Check if it already exists first:
+  aws iam list-open-id-connect-providers
+  If you see token.actions.githubusercontent.com in the output, skip Step 1.
+
+  ---
+# Step 2 — Create the trust policy document
+  cat > trust-policy.json << 'EOF'
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Federated": "arn:aws:iam::450665609241:oidc-provider/token.actions.githubusercontent.com"
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+          },
+          "StringLike": {
+            "token.actions.githubusercontent.com:sub": "repo:Ernest41k/DoD-Level-CICD-Project:ref:refs/heads/main"
+          }
+        }
+      }
+    ]
+  }
+  EOF
+
+  ---
+# Step 3 — Create the IAM role
+aws iam create-role \
+  --role-name dod-ops-cluster-github-actions \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Assumed by GitHub Actions to deploy to EKS via ArgoCD"
+
+  ---
+Step 4 — Attach the EKS permissions policy
+cat > eks-policy.json << 'EOF'
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": [
+          "eks:DescribeCluster",
+          "eks:ListClusters"
+        ],
+        "Resource": "*"
+      }
+    ]
+  }
+  EOF
+
+# This creates an inline policy attached directly to the role:
+aws iam put-role-policy \
+  --role-name dod-ops-cluster-github-actions \
+  --policy-name eks-access \
+  --policy-document file:///tmp/eks-policy.json
+
+  ---
+# Step 5 — Get the ARN for the GitHub secret
+aws iam get-role --role-name dod-ops-cluster-github-actions \
+--query 'Role.Arn' --output text
+
+  Copy that ARN and set it in GitHub → Settings → Secrets and variables → Actions → AWS_ROLE_ARN.
+
+  ---
+  Step 6 — Grant the role access to your EKS cluster
+  aws eks create-access-entry \
+    --cluster-name <your-cluster-name> \
+    --region us-east-2 \
+    --principal-arn arn:aws:iam::450665609241:role/dod-ops-cluster-github-actions \
+    --type STANDARD
+
+  aws eks associate-access-policy \
+    --cluster-name <your-cluster-name> \
+    --region us-east-2 \
+    --principal-arn arn:aws:iam::450665609241:role/dod-ops-cluster-github-actions \
+    --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+    --access-scope type=cluster
+
+# Register the IAM Role to the Cluster
+aws eks create-access-entry \
+    --cluster-name dod-ops-cluster \
+    --region us-east-2 \
+    --principal-arn arn:aws:iam::450665609241:role/dod-ops-cluster-github-actions \
+    --type STANDARD
+
+aws eks associate-access-policy \
+    --cluster-name dod-ops-cluster \
+    --region us-east-2 \
+    --principal-arn arn:aws:iam::450665609241:role/dod-ops-cluster-github-actions \
+    --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+    --access-scope type=cluster
+
+# For nginx ingress Controller to work, you need to add the following tags to both subnets:
+  Go to VPC → Subnets in the AWS console, select each public subnet, and add these tags:
+
+# force the AWS LBC to use instance mode (NodePorts) instead of IP mode. Instance mode is more reliable with ingress-nginx and    
+#  uses the correct NodePorts (30408/30575).
+helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
+    --namespace ingress-nginx \
+    --reuse-values \
+    --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"=internet-facing \
+    --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-type"=instance
+
+  ┌───────────────────────────────────────────┬────────┐
+  │                    Key                    │ Value  │
+  ├───────────────────────────────────────────┼────────┤
+  │ kubernetes.io/cluster/<your-cluster-name> │ shared │
+  ├───────────────────────────────────────────┼────────┤
+  │ kubernetes.io/role/elb                    │ 1      │
+  └───────────────────────────────────────────┴────────┘
+
+  EC2 → Security Groups → Set the node group security group → Inbound rules
+  It needs:
+  ┌────────────┬─────────────┬───────────┐
+  │    Type    │    Port     │  Source   │
+  ├────────────┼─────────────┼───────────┤
+  │ HTTP       │ 80          │ 0.0.0.0/0 │
+  ├────────────┼─────────────┼───────────┤
+  │ HTTPS      │ 443         │ 0.0.0.0/0 │
+  ├────────────┼─────────────┼───────────┤
+  │ Custom TCP │ 30000-32767 │ 0.0.0.0/0 │
+  └────────────┴─────────────┴───────────┘
+
+=========================================================================
+# Interview Prep Scenarios
+=========================================================================
+ 1. Container Scan Failing Due to Bundled npm Vulnerabilities (CVE)                                                                                                                                                                                                                              During the Trivy container scan stage, the pipeline was failing with HIGH severity CVEs for minimatch even though our application didn't        directly use the vulnerable version. After investigation, I discovered the root cause was that npm install -g npm@latest in the production
+  stage of the Dockerfile installs npm, which bundles its own internal copy of minimatch at                                                     
+  /usr/local/lib/node_modules/npm/node_modules/minimatch. Trivy was scanning that bundled copy. I resolved this by restructuring the Dockerfile
+  into a 3-stage build — Stage 1 builds the React frontend, Stage 2 installs production server dependencies, and Stage 3 is the final production
+   image which copies only the pre-built artifacts and explicitly removes npm entirely since the app only needs Node at runtime.
+
+  ---
+  2. Terraform Destroy Failing Due to Orphaned Load Balancer
+
+  When I tried to destroy the EKS cluster using terraform destroy, it failed with a DependencyViolation error because the subnets and internet  
+  gateway couldn't be deleted. The cause was that ingress-nginx had provisioned an AWS NLB that Terraform didn't manage, and that NLB was       
+  holding references to the VPC subnets. I resolved this by first deleting the ingress-nginx namespace to trigger Kubernetes to decommission the
+   NLB, waiting for AWS to fully remove it, and then re-running terraform destroy successfully. I also documented this as a required pre-destroy
+   step in the project's runbook.
+
+  ---
+  3. kubectl Authentication Failing After Cluster Rebuild
+
+  After rebuilding the cluster, kubectl commands were failing with "the server has asked for the client to provide credentials" even after      
+  running aws eks update-kubeconfig. The issue was that the cluster's authentication mode was set to API_AND_CONFIG_MAP but my IAM user
+  (Mainuser) had not been added as an access entry. Unlike older EKS setups that automatically added the creator to aws-auth, the newer API auth
+   mode requires explicitly creating an access entry. I resolved this by using aws eks create-access-entry and aws eks associate-access-policy  
+  to grant my IAM user cluster-admin access.
+
+  ---
+  4. Security Gap: Docker Image Pushed Before Security Scans
+
+  I identified a significant security gap in the pipeline where the Docker image was being pushed to Docker Hub at Stage 6, but the container   
+  scan (Trivy), SBOM generation, DAST, and compliance checks didn't run until Stages 7–11. This meant a potentially vulnerable image was        
+  publicly available before it had been vetted. I restructured the pipeline so Stage 6 only builds the image locally for validation, and added a
+   new Stage 12 that pushes to Docker Hub only after all security scans pass. This ensures no unscanned image ever reaches the registry.        
+
+  ---
+  5. Large Terraform Provider Binaries Accidentally Committed to Git
+
+  A git push was rejected by GitHub because Terraform provider binaries (up to 685MB) had been accidentally staged and committed — the
+  terraform/.terraform/ directory was missing from .gitignore. Simply adding a new commit to remove them didn't work because GitHub scans all   
+  commits in a push, not just the latest. I resolved this by doing a git reset --soft origin/main to collapse both commits back into staged     
+  changes without losing file edits, unstaging the binary files, recommitting only the intended files, and then pushing cleanly.
+
+  ---
+  6. Helm Release Stuck in Pending-Install State
+
+  On re-runs of the bootstrap pipeline after a failed install, Helm would fail with "another operation is in progress." A previous interrupted  
+  run had left the ingress-nginx release in a pending-install state, and helm upgrade --install refuses to proceed in that case. I added a      
+  cleanup step to the bootstrap pipeline that checks the current Helm release status and runs helm uninstall if the release is in a
+  pending-install, pending-upgrade, or failed state before attempting the install.
+
+  ---
+  7. ingress-nginx Controller Pods Never Starting
+
+  After fixing the stuck release issue, the Helm install was timing out because the ingress-nginx pods never became ready. I identified that I  
+  was passing --set controller.image.tag=v1.14.3 to the Helm install, but the chart version 4.14.3 already pins the correct controller version  
+  internally. Manually overriding just the tag portion was corrupting the full image reference the chart constructs internally, causing the pods
+   to fail to pull the image. Removing that override and letting the chart manage its own image reference resolved the issue.
+
+  ---
+  8. NLB Not Provisioning (Internal vs Internet-Facing)
+
+  After ingress-nginx was installed, the LoadBalancer service stayed in <pending> state for over 40 minutes. Running kubectl describe svc       
+  revealed the error: "Failed build model due to unable to resolve at least one subnet (0 match VPC and tags: kubernetes.io/role/internal-elb)".
+   I identified that the cluster had the AWS Load Balancer Controller installed, which defaults to creating internal load balancers. Since we
+  needed a public-facing load balancer, I added the annotation service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing to the      
+  ingress-nginx service. I also added the required subnet tags (kubernetes.io/role/elb: 1 and kubernetes.io/cluster/<name>: shared) to the      
+  public subnets, which are not applied automatically when creating an EKS cluster manually.
+
+  ---
+  9. Kubernetes Health Probes Triggering Rate Limiter (HTTP 429)
+
+  The application pods were repeatedly crashing and restarting. Checking the pod events showed Liveness probe failed: HTTP probe failed with    
+  statuscode: 429. The Express server had a global rate limiter set to 100 requests per 15 minutes, and with 2 pods each running readiness      
+  probes every 10 seconds, the probes alone were generating approximately 180 requests per 15 minutes — well exceeding the limit. The rate      
+  limiter was throttling the probes, causing liveness failures, which triggered pod restarts in a continuous loop. I resolved this by moving the
+   /api/health route registration to before the app.use(limiter) middleware in the Express app so probes bypass rate limiting entirely. I also  
+  increased the readiness probe interval from 10 to 30 seconds as an additional safeguard.
+
+  ---
+  10. GitHub Actions IAM Role Missing EKS Access
+
+  The bootstrap pipeline was failing because the GitHub Actions IAM role (dod-ops-cluster-github-actions) didn't have access to the EKS cluster.
+   The role was created with only eks:DescribeCluster and eks:ListClusters permissions — sufficient for the deployment pipeline but not enough  
+  to call kubectl. I resolved this by adding the role as an EKS access entry and associating it with AmazonEKSClusterAdminPolicy. I also learned
+   that this is a one-time manual step per cluster and should not be automated in the pipeline itself, since the pipeline role would need       
+  eks:CreateAccessEntry permissions to do it — which would be over-privileged for a deployment role.
