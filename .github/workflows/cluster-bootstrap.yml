@@ -135,7 +135,9 @@ jobs:
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --version ${{ env.INGRESS_NGINX_VERSION }} \
             --namespace ingress-nginx \
-            --create-namespace
+            --create-namespace \
+            --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"=internet-facing \
+            --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-type"=instance
 
           echo "Waiting for ingress-nginx controller to be ready..."
           kubectl rollout status deployment/ingress-nginx-controller \
