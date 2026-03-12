@@ -609,7 +609,9 @@ helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
 
   ---
   Pods
-
+  # To change the default namespace for your current Kubernetes context
+  kubectl config set-context --current --namespace=<namespace-name>
+  
   # List all pods in your app namespace
   kubectl get pods -n dod-production
 
@@ -629,7 +631,7 @@ helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
   kubectl logs <pod-name> -n dod-production --previous
 
   # Shell into a running pod
-  kubectl exec -it <pod-name> -n dod-production -- /bin/sh
+  kubectl exec -it <pod-name> -n dod-production -- //bin/sh
 
   ---
   Deployments

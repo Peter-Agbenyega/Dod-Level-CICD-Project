@@ -9,7 +9,7 @@ image:
   tag: "29223c8c671c0edc5d74bac37c3e0908e1c957bc"
   pullPolicy: Always
 
-replicaCount: 2
+replicaCount: 3
 
 nameOverride: ""
 fullnameOverride: ""
