@@ -13,7 +13,7 @@
 #   8. IaC Scan (Checkov) — Dockerfile, docker-compose, Terraform, Helm
 #   9. SBOM Generation (Syft)
 #  10. DAST (OWASP ZAP)
-#  11. Compliance (Docker Bench for Security)
+#  11. Compliance (Docker Bench)
 #  12. Push to Docker Hub (only after ALL scans pass)
 #  13. Publish Artifacts
 #  14. Manual Approval (production environment gate)
@@ -28,8 +28,6 @@ on:
   pull_request:
     branches: [main]
 
-# contents:write  — stage 15 commits the updated image tag back to the repo
-# id-token:write  — stage 15 exchanges a GitHub OIDC token for AWS credentials
 permissions:
   contents: write
   id-token: write
@@ -39,9 +37,6 @@ env:
   NODE_VERSION: '20'
 
 jobs:
-  # ==========================================================================
-  # Stage 1: Lint - ESLint with Security Plugin
-  # ==========================================================================
   lint:
     name: "1. Lint (ESLint + Security)"
     runs-on: ubuntu-latest
@@ -75,9 +70,6 @@ jobs:
           path: eslint-results.json
           retention-days: 30
 
-  # ==========================================================================
-  # Stage 2: Unit Tests - Jest with Coverage
-  # ==========================================================================
   test:
     name: "2. Unit Tests (Jest)"
     runs-on: ubuntu-latest
@@ -106,9 +98,6 @@ jobs:
           path: coverage/
           retention-days: 30
 
-  # ==========================================================================
-  # Stage 3: SAST - SonarCloud Static Analysis
-  # ==========================================================================
   sast:
     name: "3. SAST (SonarCloud)"
     runs-on: ubuntu-latest
@@ -129,9 +118,6 @@ jobs:
       - name: SAST scan completed
         run: echo "SAST analysis submitted to SonarCloud. Review results at sonarcloud.io"
 
-  # ==========================================================================
-  # Stage 4: SCA - Software Composition Analysis
-  # ==========================================================================
   sca:
     name: "4. SCA (npm audit + OSV-Scanner)"
     runs-on: ubuntu-latest
@@ -145,7 +131,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # npm audit for server
       - name: npm audit (server)
         working-directory: ./server
         run: |
@@ -154,7 +139,6 @@ jobs:
           echo "=== Server Dependency Audit ==="
           npm audit || true
 
-      # npm audit for client
       - name: npm audit (client)
         working-directory: ./client
         run: |
@@ -163,7 +147,6 @@ jobs:
           echo "=== Client Dependency Audit ==="
           npm audit || true
 
-      # OSV-Scanner for known vulnerabilities in the OSV database
       - name: Run OSV-Scanner
         uses: google/osv-scanner-action/osv-scanner-action@v1.9.2
         continue-on-error: true
@@ -182,9 +165,6 @@ jobs:
             npm-audit-client.json
           retention-days: 30
 
-  # ==========================================================================
-  # Stage 5: Secrets Detection - Gitleaks
-  # ==========================================================================
   secrets:
     name: "5. Secrets Detection (Gitleaks)"
     runs-on: ubuntu-latest
@@ -200,10 +180,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
-  # ==========================================================================
-  # Stage 6: Build Docker image — validate only, no push to registry.
-  # The image is NOT published until all security scans pass (Stage 12).
-  # ==========================================================================
   build:
     name: "6. Build (validate — no push)"
     runs-on: ubuntu-latest
@@ -219,9 +195,6 @@ jobs:
       - name: Confirm build succeeded
         run: docker inspect ${{ env.DOCKER_IMAGE }}:${{ github.sha }} > /dev/null
 
-  # ==========================================================================
-  # Stage 7: Container Vulnerability Scan - Trivy
-  # ==========================================================================
   container-scan:
     name: "7. Container Scan (Trivy)"
     runs-on: ubuntu-latest
@@ -233,9 +206,8 @@ jobs:
       - name: Build image for scanning
         run: docker build -t ${{ env.DOCKER_IMAGE }}:scan .
 
-      # Trivy image vulnerability scan (fails on HIGH/CRITICAL)
       - name: Trivy image vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: '${{ env.DOCKER_IMAGE }}:scan'
           format: 'table'
@@ -244,9 +216,8 @@ jobs:
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
 
-      # Always generate SARIF for artifact upload
       - name: Trivy SARIF report
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         if: always()
         with:
           image-ref: '${{ env.DOCKER_IMAGE }}:scan'
@@ -270,9 +241,6 @@ jobs:
             trivy-image-results.sarif
           retention-days: 30
 
-  # ==========================================================================
-  # Stage 8: IaC Scan - Checkov
-  # ==========================================================================
   iac-scan:
     name: "8. IaC Scan (Checkov)"
     runs-on: ubuntu-latest
@@ -309,9 +277,6 @@ jobs:
           output_format: cli
           soft_fail: true
 
-  # ==========================================================================
-  # Stage 9: SBOM Generation - Syft (CycloneDX format)
-  # ==========================================================================
   sbom:
     name: "9. SBOM Generation (Syft)"
     runs-on: ubuntu-latest
@@ -337,9 +302,6 @@ jobs:
           path: sbom-cyclonedx.json
           retention-days: 30
 
-  # ==========================================================================
-  # Stage 10: DAST - OWASP ZAP Baseline Scan
-  # ==========================================================================
   dast:
     name: "10. DAST (OWASP ZAP)"
     runs-on: ubuntu-latest
@@ -376,9 +338,6 @@ jobs:
           path: report_html.html
           retention-days: 30
 
-  # ==========================================================================
-  # Stage 11: Compliance - Docker Bench for Security (CIS Benchmark)
-  # ==========================================================================
   compliance:
     name: "11. Compliance (Docker Bench)"
     runs-on: ubuntu-latest
@@ -416,11 +375,6 @@ jobs:
           path: docker-bench-results.txt
           retention-days: 30
 
-  # ==========================================================================
-  # Stage 12: Push verified image to Docker Hub
-  # Runs only after ALL security scans pass. This is the security gate —
-  # no unscanned image ever reaches the registry.
-  # ==========================================================================
   push:
     name: "12. Push to Docker Hub (post-scan)"
     runs-on: ubuntu-latest
@@ -448,9 +402,6 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ github.sha }}
 
-  # ==========================================================================
-  # Stage 13: Publish All Scan Artifacts (summary)
-  # ==========================================================================
   publish-artifacts:
     name: "13. Publish Scan Summary"
     runs-on: ubuntu-latest
@@ -481,13 +432,6 @@ jobs:
           path: all-scan-results/
           retention-days: 30
 
-  # ==========================================================================
-  # Stage 14: Manual Approval Gate
-  # Pauses the pipeline and waits for a designated reviewer to approve
-  # before deployment proceeds. Requires a GitHub Environment named
-  # "production" with required reviewers configured:
-  #   Repo → Settings → Environments → production → Required reviewers
-  # ==========================================================================
   approval:
     name: "14. Manual Approval"
     runs-on: ubuntu-latest
@@ -498,16 +442,6 @@ jobs:
       - name: Deployment approved
         run: echo "Deployment to EKS approved. Proceeding..."
 
-  # ==========================================================================
-  # Stage 15: Deploy to EKS (GitOps via ArgoCD)
-  # Runs only after manual approval is granted.
-  # Flow:
-  #   1. Update image tag in helm/values.yaml and push ([skip ci] commit)
-  #   2. Annotate the ArgoCD Application to trigger an immediate refresh
-  #   3. Wait for Kubernetes rollout to complete
-  #   4. Health-check the app via the ingress-nginx load balancer
-  # Requires GitHub secret: AWS_ROLE_ARN
-  # ==========================================================================
   deploy:
     name: "15. Deploy to EKS (GitOps → ArgoCD)"
     runs-on: ubuntu-latest
@@ -564,7 +498,6 @@ jobs:
 
       - name: Verify EKS deployment health
         run: |
-          # Wait for the NLB hostname to be assigned (can take 3-5 min on AWS)
           echo "Waiting for NLB hostname to be assigned..."
           for i in $(seq 1 24); do
             ELB=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
@@ -583,7 +516,6 @@ jobs:
             exit 1
           fi
 
-          # Wait for the app to respond on the NLB
           echo "Waiting for app to respond..."
           for i in $(seq 1 18); do
             HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
