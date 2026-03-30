@@ -6,7 +6,7 @@
 
 image:
   repository: africaprocloud/dod-ops-dashboard
-  tag: "c5352fc07d8269951addaa0d65b32559a7f7f0ac"
+  tag: "34bd6839b1019186f1de1bbf7a9645311c94a3ae"
   pullPolicy: Always
 
 replicaCount: 3
