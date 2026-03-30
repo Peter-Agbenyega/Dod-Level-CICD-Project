@@ -19,7 +19,7 @@ variable "cluster_version" {
 variable "github_repo" {
   description = "GitHub repository (owner/repo) allowed to assume the deploy IAM role"
   type        = string
-  default     = "Ernest41k/DoD-Level-CICD-Project"
+  default     = "Peter-Agbenyega/Dod-Level-CICD-Project"
 }
 
 variable "vpc_cidr" {
@@ -37,17 +37,17 @@ variable "node_instance_type" {
 variable "node_min_size" {
   description = "Minimum number of worker nodes"
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "node_max_size" {
   description = "Maximum number of worker nodes"
   type        = number
-  default     = 4
+  default     = 2
 }
 
 variable "node_desired_size" {
   description = "Desired number of worker nodes"
   type        = number
-  default     = 2
+  default     = 1
 }

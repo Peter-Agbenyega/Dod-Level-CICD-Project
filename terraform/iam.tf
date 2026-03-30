@@ -11,6 +11,11 @@ resource "aws_iam_openid_connect_provider" "github" {
   thumbprint_list = [data.tls_certificate.github.certificates[0].sha1_fingerprint]
 }
 
+import {
+  to = aws_iam_openid_connect_provider.github
+  id = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
+}
+
 # ─── GitHub Actions IAM Role ──────────────────────────────────────────────────
 data "aws_iam_policy_document" "github_actions_assume" {
   statement {
@@ -41,6 +46,11 @@ resource "aws_iam_role" "github_actions" {
   assume_role_policy = data.aws_iam_policy_document.github_actions_assume.json
 
   description = "Assumed by GitHub Actions to deploy to EKS via ArgoCD"
+}
+
+import {
+  to = aws_iam_role.github_actions
+  id = "${var.cluster_name}-github-actions"
 }
 
 # Allow GitHub Actions to describe and update the EKS cluster
