@@ -1,5 +1,5 @@
 # =============================================================================
-# DoD Ops Dashboard - Helm Values
+# Reference application Helm values
 # The CI/CD pipeline overwrites image.tag with the verified github.sha
 # after the image passes all security scans (Trivy, SBOM, DAST, Compliance).
 # =============================================================================
@@ -45,7 +45,7 @@ autoscaling:
   maxReplicas: 6
   targetCPUUtilizationPercentage: 70
 
-# DoD-required pod security settings (do not relax these)
+# Pod security settings for the reference deployment
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000

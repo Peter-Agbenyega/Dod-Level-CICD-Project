@@ -1,6 +1,6 @@
 # =============================================================================
-# DoD DevSecOps CI/CD Pipeline
-# Mirrors DoD Enterprise DevSecOps Reference Design
+# Secure DevSecOps CI/CD Pipeline
+# Public reference architecture for layered software delivery security
 # =============================================================================
 # Pipeline Stages:
 #   1. Lint (ESLint + Security Plugin)
@@ -20,7 +20,7 @@
 #  15. Deploy to EKS (GitOps → ArgoCD)
 # =============================================================================
 
-name: DoD DevSecOps Pipeline
+name: Secure DevSecOps Pipeline
 
 on:
   push:
@@ -418,7 +418,7 @@ jobs:
       - name: List all scan results
         run: |
           echo "============================================"
-          echo "  DoD DevSecOps Pipeline - Scan Summary"
+          echo "  Secure DevSecOps Pipeline - Scan Summary"
           echo "============================================"
           echo ""
           find all-scan-results/ -type f | sort
@@ -461,7 +461,7 @@ jobs:
           aws-region: us-east-2
 
       - name: Configure kubectl
-        run: aws eks update-kubeconfig --name dod-ops-cluster --region us-east-2
+        run: aws eks update-kubeconfig --name secure-devsecops-reference-cluster --region us-east-2
 
       - name: Ensure ArgoCD Application is registered
         run: kubectl apply -f argocd/application.yaml

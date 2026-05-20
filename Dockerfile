@@ -1,5 +1,5 @@
 # =============================================================================
-# Multi-stage Dockerfile for DoD Tactical Operations Center Dashboard
+# Multi-stage Dockerfile for the secure DevSecOps reference application
 # Stage 1: Build React frontend
 # Stage 2: Install production server dependencies
 # Stage 3: Final production image (no npm — only node + pre-built artifacts)

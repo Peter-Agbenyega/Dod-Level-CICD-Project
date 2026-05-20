@@ -1,6 +1,6 @@
 {{- if .Values.networkPolicy.enabled }}
 # =============================================================================
-# DoD Zero-Trust Network Policy
+# Zero-trust style network policy
 # Default: deny ALL ingress and egress.
 # Explicitly allow only what is required.
 # =============================================================================

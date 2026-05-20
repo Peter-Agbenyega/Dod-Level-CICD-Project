@@ -1,12 +1,12 @@
 apiVersion: v2
 name: dod-ops-dashboard
-description: DoD Tactical Operations Center Dashboard
+description: Demonstration dashboard for the secure DevSecOps pipeline reference architecture
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
 keywords:
-  - dod
+  - secure-pipeline
   - devSecOps
-  - tactical-operations
+  - reference-architecture
 maintainers:
-  - name: DoD DevSecOps Team
+  - name: Peter Agbenyega

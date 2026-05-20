@@ -10,7 +10,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/Ernest41k/DoD-Level-CICD-Project
+    repoURL: https://github.com/Peter-Agbenyega/secure-devsecops-pipeline-reference-architecture.git
     targetRevision: main
     path: helm/dod-ops-dashboard
     helm:

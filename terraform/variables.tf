@@ -7,7 +7,7 @@ variable "region" {
 variable "cluster_name" {
   description = "EKS cluster name"
   type        = string
-  default     = "dod-ops-cluster"
+  default     = "secure-devsecops-reference-cluster"
 }
 
 variable "cluster_version" {
@@ -19,7 +19,7 @@ variable "cluster_version" {
 variable "github_repo" {
   description = "GitHub repository (owner/repo) allowed to assume the deploy IAM role"
   type        = string
-  default     = "Peter-Agbenyega/Dod-Level-CICD-Project"
+  default     = "Peter-Agbenyega/secure-devsecops-pipeline-reference-architecture"
 }
 
 variable "vpc_cidr" {

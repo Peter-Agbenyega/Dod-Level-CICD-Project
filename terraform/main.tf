@@ -12,14 +12,11 @@ terraform {
     }
   }
 
-  # Remote state — create the S3 bucket and DynamoDB table first:
-  #   aws s3api create-bucket --bucket dod-tfstate-<account-id> --region us-east-2 --create-bucket-configuration LocationConstraint=us-east-2
-  #   aws dynamodb create-table --table-name dod-tfstate-lock --attribute-definitions AttributeName=LockID,AttributeType=S --key-schema AttributeName=LockID,KeyType=HASH --billing-mode PAY_PER_REQUEST --region us-east-2
   backend "s3" {
-    bucket         = "dod-tfstate-333813598689"
+    bucket         = "replace-with-your-terraform-state-bucket"
     key            = "eks/terraform.tfstate"
     region         = "us-east-2"
-    dynamodb_table = "dod-tfstate-lock"
+    dynamodb_table = "replace-with-your-terraform-lock-table"
     encrypt        = true
   }
 }
@@ -29,7 +26,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = "DoD-DevSecOps"
+      Project     = "Secure-DevSecOps-Reference"
       Environment = "production"
       ManagedBy   = "Terraform"
     }

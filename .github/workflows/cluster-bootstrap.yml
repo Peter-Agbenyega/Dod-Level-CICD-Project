@@ -23,7 +23,7 @@ on:
       cluster_name:
         description: "EKS cluster name"
         required: true
-        default: "dod-ops-cluster"
+        default: "secure-devsecops-reference-cluster"
       aws_region:
         description: "AWS region"
         required: true
@@ -48,9 +48,9 @@ jobs:
   # third-party images we do not own — we cannot patch CVEs in ingress-nginx
   # or ArgoCD directly. Results are uploaded as artifacts for review.
   #
-  # In a real DoD environment this stage is replaced by simply pulling from
-  # Iron Bank, where images are pre-vetted and carry an ATO. For this project
-  # we scan and report so the results are visible and auditable.
+  # In a regulated environment this stage could be replaced by consuming
+  # pre-vetted images from an approved registry. For this project we scan and
+  # report so the results are visible and auditable.
   # ============================================================================
   scan-images:
     name: "1. Scan Cluster Component Images (Trivy)"

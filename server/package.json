@@ -1,7 +1,7 @@
 {
   "name": "dod-ops-dashboard-server",
   "version": "1.0.0",
-  "description": "DoD Tactical Operations Center - Express API Server",
+  "description": "Express API server for the secure DevSecOps pipeline reference application",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
